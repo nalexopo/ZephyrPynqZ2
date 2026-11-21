@@ -1,0 +1,263 @@
+From 9664852ac6b1f64f5a02f35a52fbc02564f13d93 Mon Sep 17 00:00:00 2001
+From: Nikos Alexo <nalexopo@gmail.com>
+Date: Sun, 22 Nov 2026 00:43:09 +0200
+Subject: [PATCH] arch: arm: cortex_a_r: add PL310 outer cache maintenance
+
+The Cortex-A/R AArch32 cache code only maintains the L1 data cache.
+On SoCs with a PL310 (L2C-310) outer cache, such as the Zynq-7000,
+DMA masters that do not go through the L2 (e.g. the GEM Ethernet
+controller) see stale data when the L2 is enabled.
+
+If the SoC header sets __L2C_PRESENT and L2C_310_BASE, extend the
+data cache flush/invalidate range and flush-all operations to the
+outer cache, in the order required for DMA coherency. Enable it for
+the Zynq-7000 and map the PL310 registers in its MMU region table.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/core/cortex_a_r/cache.c | 145 ++++++++++++++++++++++++++++++-
+ soc/xlnx/zynq7000/common/soc.c   |   5 ++
+ soc/xlnx/zynq7000/common/soc.h   |   8 ++
+ 3 files changed, 157 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/core/cortex_a_r/cache.c b/arch/arm/core/cortex_a_r/cache.c
+index 0795006..0d47004 100644
+--- a/arch/arm/core/cortex_a_r/cache.c
++++ b/arch/arm/core/cortex_a_r/cache.c
+@@ -9,7 +9,11 @@
+  * @brief Cortex-A/R AArch32 L1-cache maintenance operations.
+  *
+  * This module implement the cache API for Cortex-A/R AArch32 cores using CMSIS.
+- * Only L1-cache maintenance operations is supported.
++ * L1-cache maintenance operations are supported. If the SoC header declares
++ * a PL310 (L2C-310) outer cache controller (__L2C_PRESENT == 1 and
++ * L2C_310_BASE), the data cache flush/invalidate operations also cover the
++ * outer cache, so that buffers shared with DMA masters that do not go
++ * through the L2 (e.g. the Zynq-7000 GEM) stay coherent.
+  */
+ 
+ #include <zephyr/kernel.h>
+@@ -23,6 +27,102 @@
+ 
+ #ifdef CONFIG_DCACHE
+ 
++#if defined(__L2C_PRESENT) && (__L2C_PRESENT == 1U)
++#define L2C_OUTER_CACHE 1
++
++/* PL310 line size is fixed at 32 bytes */
++#define L2C_LINE_SIZE		32U
++#define L2C_CONTROL_ENABLE	BIT(0)
++#define L2C_AUX_ASSOC_16WAY	BIT(16)
++
++static inline bool l2c_is_enabled(void)
++{
++	return (L2C_310->CONTROL & L2C_CONTROL_ENABLE) != 0U;
++}
++
++static inline void l2c_sync(void)
++{
++	L2C_310->CACHE_SYNC = 0U;
++}
++
++/*
++ * Apply a by-PA line operation (clean, invalidate or clean+invalidate) to
++ * every L2 line touched by [start, end). The SoCs using this code map memory
++ * 1:1, so virtual addresses are used as physical addresses. On PL310 r3p0
++ * and later the by-PA operations are atomic, so no completion polling.
++ */
++static void l2c_range_op(volatile uint32_t *op_reg, uintptr_t start,
++			 uintptr_t end)
++{
++	uintptr_t addr = start & ~(uintptr_t)(L2C_LINE_SIZE - 1U);
++
++	while (addr < end) {
++		*op_reg = (uint32_t)addr;
++		addr += L2C_LINE_SIZE;
++	}
++	l2c_sync();
++}
++
++static void l2c_flush_range(uintptr_t start, uintptr_t end)
++{
++	if (l2c_is_enabled()) {
++		l2c_range_op(&L2C_310->CLEAN_LINE_PA, start, end);
++	}
++}
++
++static void l2c_flush_and_invd_range(uintptr_t start, uintptr_t end)
++{
++	if (l2c_is_enabled()) {
++		l2c_range_op(&L2C_310->CLEAN_INV_LINE_PA, start, end);
++	}
++}
++
++/*
++ * Invalidate [start, end) in L2. Partial lines at either end also hold data
++ * outside the range, so those are cleaned+invalidated instead.
++ */
++static void l2c_invd_range(uintptr_t start, uintptr_t end)
++{
++	const uintptr_t mask = L2C_LINE_SIZE - 1U;
++
++	if (!l2c_is_enabled() || (start >= end)) {
++		return;
++	}
++
++	if ((start & mask) != 0U) {
++		L2C_310->CLEAN_INV_LINE_PA = (uint32_t)(start & ~mask);
++		start = (start & ~mask) + L2C_LINE_SIZE;
++	}
++
++	if (((end & mask) != 0U) && (end > start)) {
++		end &= ~mask;
++		L2C_310->CLEAN_INV_LINE_PA = (uint32_t)end;
++	}
++
++	l2c_range_op(&L2C_310->INV_LINE_PA, start, end);
++}
++
++/* Clean (and optionally invalidate) the whole L2, by way */
++static void l2c_flush_all(bool invalidate)
++{
++	volatile uint32_t *way_reg;
++	uint32_t ways;
++
++	if (!l2c_is_enabled()) {
++		return;
++	}
++
++	way_reg = invalidate ? &L2C_310->CLEAN_INV_WAY : &L2C_310->CLEAN_WAY;
++	ways = ((L2C_310->AUX_CNT & L2C_AUX_ASSOC_16WAY) != 0U) ? 0xFFFFU : 0xFFU;
++
++	*way_reg = ways;
++	while ((*way_reg & ways) != 0U) {
++		/* Background operation, wait for completion */
++	}
++	l2c_sync();
++}
++#endif /* __L2C_PRESENT */
++
+ static size_t dcache_line_size;
+ 
+ /**
+@@ -85,11 +185,20 @@ int arch_dcache_flush_all(void)
+ {
+ 	L1C_CleanDCacheAll();
+ 
++#ifdef L2C_OUTER_CACHE
++	barrier_dsync_fence_full();
++	l2c_flush_all(false);
++#endif
++
+ 	return 0;
+ }
+ 
+ int arch_dcache_invd_all(void)
+ {
++	/*
++	 * L1 only: invalidating the whole L2 would discard dirty data of
++	 * unrelated memory (stack, kernel objects, ...).
++	 */
+ 	L1C_InvalidateDCacheAll();
+ 
+ 	return 0;
+@@ -99,6 +208,11 @@ int arch_dcache_flush_and_invd_all(void)
+ {
+ 	L1C_CleanInvalidateDCacheAll();
+ 
++#ifdef L2C_OUTER_CACHE
++	barrier_dsync_fence_full();
++	l2c_flush_all(true);
++#endif
++
+ 	return 0;
+ }
+ 
+@@ -117,6 +231,12 @@ int arch_dcache_flush_range(void *start_addr, size_t size)
+ 		addr += line_size;
+ 	}
+ 
++#ifdef L2C_OUTER_CACHE
++	/* L1 write-backs must reach the L2 before it is cleaned */
++	barrier_dsync_fence_full();
++	l2c_flush_range((uintptr_t)start_addr, end_addr);
++#endif
++
+ 	return 0;
+ }
+ 
+@@ -128,6 +248,23 @@ int arch_dcache_invd_range(void *start_addr, size_t size)
+ 
+ 	line_size = arch_dcache_line_size_get();
+ 
++#ifdef L2C_OUTER_CACHE
++	/*
++	 * Invalidate the outer cache first, so that the L1 cannot refill
++	 * stale lines from the L2 after it has been invalidated. Dirty L1 data
++	 * in partial lines at both ends must reach the L2 before the L2
++	 * cleans+invalidates those lines.
++	 */
++	if ((addr & (line_size - 1)) != 0U) {
++		L1C_CleanDCacheMVA((void *)(addr & ~(line_size - 1)));
++	}
++	if ((end_addr & (line_size - 1)) != 0U) {
++		L1C_CleanDCacheMVA((void *)(end_addr & ~(line_size - 1)));
++	}
++	barrier_dsync_fence_full();
++	l2c_invd_range(addr, end_addr);
++#endif
++
+ 	/*
+ 	 * Clean and invalidate the partial cache lines at both ends of the
+ 	 * given range to prevent data corruption
+@@ -173,6 +310,12 @@ int arch_dcache_flush_and_invd_range(void *start_addr, size_t size)
+ 		addr += line_size;
+ 	}
+ 
++#ifdef L2C_OUTER_CACHE
++	/* L1 write-backs must reach the L2 before it is cleaned */
++	barrier_dsync_fence_full();
++	l2c_flush_and_invd_range((uintptr_t)start_addr, end_addr);
++#endif
++
+ 	return 0;
+ }
+ 
+diff --git a/soc/xlnx/zynq7000/common/soc.c b/soc/xlnx/zynq7000/common/soc.c
+index b60b837..a0603af 100644
+--- a/soc/xlnx/zynq7000/common/soc.c
++++ b/soc/xlnx/zynq7000/common/soc.c
+@@ -32,6 +32,11 @@ static const struct arm_mmu_region mmu_regions[] = {
+ 			      0xF8F00000,
+ 			      0x2000,
+ 			      MT_STRONGLY_ORDERED | MPERM_R | MPERM_W),
++	/* PL310 L2 cache controller, used by the arch cache maintenance code */
++	MMU_REGION_FLAT_ENTRY("l2c",
++			      L2C_310_BASE,
++			      0x1000,
++			      MT_STRONGLY_ORDERED | MPERM_R | MPERM_W),
+ 	MMU_REGION_FLAT_ENTRY("ocm",
+ 			      DT_REG_ADDR(DT_CHOSEN(zephyr_ocm)),
+ 			      DT_REG_SIZE(DT_CHOSEN(zephyr_ocm)),
+diff --git a/soc/xlnx/zynq7000/common/soc.h b/soc/xlnx/zynq7000/common/soc.h
+index 5ce5230..1468307 100644
+--- a/soc/xlnx/zynq7000/common/soc.h
++++ b/soc/xlnx/zynq7000/common/soc.h
+@@ -15,6 +15,14 @@
+ 
+ #define __CORTEX_A 9U
+ 
++/*
++ * PL310 (L2C-310) outer cache controller, part of the A9 MPCore block.
++ * Enables the CMSIS L2C_310 register definitions, which the Cortex-A/R
++ * cache maintenance code uses for outer cache operations.
++ */
++#define __L2C_PRESENT 1U
++#define L2C_310_BASE  0xF8F02000UL
++
+ #endif /* !_ASMLANGUAGE */
+ 
+ #endif /* _SOC__H_ */
+-- 
+2.43.0
+

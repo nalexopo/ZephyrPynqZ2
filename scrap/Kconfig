@@ -39,52 +39,6 @@ config NET_SAMPLE_HTTPS_SERVICE
 	default y if NET_SAMPLE_WEBSOCKET_CONSOLE
 	depends on NET_SOCKETS_SOCKOPT_TLS || TLS_CREDENTIALS
 
-config NET_CONFIG_NEED_IPV4_BOOT_TIME
-	bool "Websocket console support"
-	default y
-
-config NET_IPV4_PING
-	bool "Websocket console support"
-	default y
-
-config NET_ICMPV4
-	bool "enable ping"
-	default y
-
-config GPIO_ZYNQ
-	bool "enable ping"
-	default y
-
-
-config NET_TX_CHECKSUM_OFFLOAD
-	bool "enable ping"
-	default y
-
-config NET_RX_CHECKSUM_OFFLOAD
-	bool "enable ping"
-	default y
-
-config NET_DEBUG_DHCPV4
-	bool "skata"
-	default y
-
-config	NET_ETH_MTU
-	int "skata"
-	default 1500
-
-config	NET_ETH_PAD_TX
-	bool "skata"
-	default y
-
-config DEBUG_INFO
-	bool  "poutsa"
-	default y
-
-config NET_ETHERNET_FORCE_100MBPS
-	bool "otinanai"
-	default y
-
-
 if USB_DEVICE_STACK_NEXT
 
 # Source common USB sample options used to initialize new experimental USB
