@@ -9,6 +9,7 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
+
 #include "pynqz2-pinctrl.dtsi"
 
 / {
@@ -56,6 +57,37 @@
 	clock-frequency = <100000000>;
 	pinctrl-0 = <&pinctrl_uart0_default>;
 	pinctrl-names = "default";
+};
+
+&gem0 {
+    status = "okay";
+    phy-handle = <&ethernet_phy>;
+
+	//                                                                                                                                                                                                                                                                                                                                                              rgmii-id" to force explicit internal RX and TX delays */
+    //phy-connection-type = "rgmii-id"; 
+    phy-connection-type = "internal"; 
+
+	//phy-reset-gpios = <&psgpio_bank1  9 GPIO_ACTIVE_LOW>;
+    /* Add this property to ensure the driver handles proper clock tuning */
+    //xlnx,has-mdio;
+
+	// /* Force the driver to use Gigabit internal logic structures */
+    //link-speed = <XLNX_GEM_LINK_SPEED_100MBIT>;
+    
+    // /* Set the MDC management divider (typically 48 for standard Zynq systems) */
+    // mdc-divider = <XLNX_GEM_MDC_DIVIDER_48>;
+	clock-frequency = <125000000>;
+	local-mac-address = [00 e0 4c 68 01 01];
+};
+
+&gem0_mdio {
+    status = "okay";
+	
+    ethernet_phy: ethernet-phy@0xe000b000 {
+        compatible = "ethernet-phy";
+		reg = <1>; 
+        status = "okay";
+    };
 };
 
 &psgpio {

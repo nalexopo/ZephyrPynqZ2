@@ -1,97 +1,85 @@
-.. zephyr:code-sample:: blinky
-   :name: Blinky
-   :relevant-api: gpio_interface
+.. zephyr:code-sample:: sockets-echo
+   :name: Echo server (simple)
+   :relevant-api: bsd_sockets
 
-   Blink an LED forever using the GPIO API.
+   Implements a simple IPv4/IPv6 TCP echo server using BSD sockets.
 
 Overview
 ********
 
-The Blinky sample blinks an LED forever using the :ref:`GPIO API <gpio_api>`.
+The sockets/echo sample application for Zephyr implements a TCP echo
+server supporting both IPv4 and IPv6 and using a BSD Sockets compatible API.
+The purpose of this sample is to show how it's possible to develop a sockets
+application portable to both POSIX and Zephyr. As such, it is kept minimal
+and supports only IPv4, IPv6 and TCP.
 
-The source code shows how to:
-
-#. Get a pin specification from the :ref:`devicetree <dt-guide>` as a
-   :c:struct:`gpio_dt_spec`
-#. Configure the GPIO pin as an output
-#. Toggle the pin forever
-
-See :zephyr:code-sample:`pwm-blinky` for a similar sample that uses the PWM API instead.
-
-.. _blinky-sample-requirements:
+The source code for this sample application can be found at:
+:zephyr_file:`samples/net/sockets/echo`.
 
 Requirements
 ************
 
-Your board must:
-
-#. Have an LED connected via a GPIO pin (these are called "User LEDs" on many of
-   Zephyr's :ref:`boards`).
-#. Have the LED configured using the ``led0`` devicetree alias.
+- :ref:`networking_with_host`
+- or, a board with hardware networking
 
 Building and Running
 ********************
 
-Build and flash Blinky as follows, changing ``reel_board`` for your board:
+Build the Zephyr version of the sockets/echo application like this:
 
 .. zephyr-app-commands::
-   :zephyr-app: samples/basic/blinky
-   :board: reel_board
-   :goals: build flash
+   :zephyr-app: samples/net/sockets/echo
+   :board: <board_to_use>
+   :goals: build
    :compact:
 
-After flashing, the LED starts to blink and messages with the current LED state
-are printed on the console. If a runtime error occurs, the sample exits without
-printing to the console.
+After the sample starts, it expects connections at 192.0.2.1, port 4242.
+The easiest way to connect is:
 
-Build errors
-************
+.. code-block:: console
 
-You will see a build error at the source code line defining the ``struct
-gpio_dt_spec led`` variable if you try to build Blinky for an unsupported
-board.
+    $ telnet 192.0.2.1 4242
 
-On GCC-based toolchains, the error looks like this:
+After a connection is made, the application will echo back any line sent
+to it. The application implements a single-threaded server using blocking
+sockets, and thus can serve only one client connection at time. After the
+current client disconnects, the next connection can proceed.
 
-.. code-block:: none
+Running application on POSIX Host
+=================================
 
-   error: '__device_dts_ord_DT_N_ALIAS_led_P_gpios_IDX_0_PH_ORD' undeclared here (not in a function)
+The same application source code can be built for a POSIX system, e.g.
+Linux. (Note: if you look at the source, you will see that the code is
+the same except the header files are different for Zephyr vs POSIX.)
 
-Adding board support
-********************
+To build:
 
-To add support for your board, add something like this to your devicetree:
+.. code-block:: console
 
-.. code-block:: DTS
+    $ make -f Makefile.host
 
-   / {
-   	aliases {
-   		led0 = &myled0;
-   	};
+To run:
 
-   	leds {
-   		compatible = "gpio-leds";
-   		myled0: led_0 {
-   			gpios = <&gpio0 13 GPIO_ACTIVE_LOW>;
-                };
-   	};
-   };
+.. code-block:: console
 
-The above sets your board's ``led0`` alias to use pin 13 on GPIO controller
-``gpio0``. The pin flags :c:macro:`GPIO_ACTIVE_LOW` mean the LED is on when
-the pin is set to its low state, and off when the pin is in its high state.
+    $ ./socket_echo
 
-Tips:
+To test:
 
-- See :dtcompatible:`gpio-leds` for more information on defining GPIO-based LEDs
-  in devicetree.
+.. code-block:: console
 
-- If you're not sure what to do, check the devicetrees for supported boards which
-  use the same SoC as your target. See :ref:`get-devicetree-outputs` for details.
+    $ telnet 127.0.0.1 4242
 
-- See :zephyr_file:`include/zephyr/dt-bindings/gpio/gpio.h` for the flags you can use
-  in devicetree.
+As can be seen, the behavior of the application is the same as the Zephyr
+version.
 
-- If the LED is built in to your board hardware, the alias should be defined in
-  your :ref:`BOARD.dts file <devicetree-in-out-files>`. Otherwise, you can
-  define one in a :ref:`devicetree overlay <set-devicetree-overlays>`.
+Running on cc3220sf_launchxl
+============================
+
+See the note on Provisioning and Fast Connect in :zephyr:board:`cc3220sf_launchxl`.
+
+After having connected to an Access Point using the sample Wi-Fi shell,
+the IP address will be printed to the console upon running this echo
+application.
+
+Proceed to test as above.
