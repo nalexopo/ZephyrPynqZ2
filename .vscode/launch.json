@@ -1,0 +1,50 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Cortex Debug",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/zephyr/zephyr.elf",
+            "request": "launch",
+            "type": "cortex-debug",
+            "runToEntryPoint": "main",
+            "servertype": "stlink"
+        },
+        {
+            // Board in JTAG boot mode (JP1 = JTAG). Nothing else (xsct/hw_server,
+            // Vivado HW manager) may hold the JTAG cable.
+            "name": "Debug Zephyr on PYNQ-Z2",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/zephyr/zephyr.elf",
+            "request": "launch",
+            "type": "cortex-debug",
+            "servertype": "openocd",
+            "configFiles": [
+                "${workspaceFolder}/boards/tul/pynqz2/support/openocd.cfg"
+            ],
+            "gdbPath": "arm-none-eabi-gdb",
+            "overrideLaunchCommands": [
+                "monitor pynqz2_prepare ${workspaceFolder}/boards/tul/pynqz2/support/qspifsbl.elf",
+                "load",
+                "set $pc = 0x00100000"
+            ],
+            "overrideRestartCommands": [
+                "monitor pynqz2_prepare ${workspaceFolder}/boards/tul/pynqz2/support/qspifsbl.elf",
+                "load",
+                "set $pc = 0x00100000"
+            ],
+            "runToEntryPoint": "main",
+            "breakAfterReset": false,
+            // Cortex-M specific features that do not apply to the A9 and only
+            // cost JTAG round trips on every stop.
+            "rttConfig": { "enabled": false },
+            "swoConfig": { "enabled": false },
+            "liveWatch": { "enabled": false },
+            "showDevDebugOutput": "none"
+        }
+    ]
+}
